@@ -125,7 +125,8 @@ mod tests {
 ..592.....
 ......755.
 ...$.*....
-.664.598..";
+.664.598..
+";
         let schematic = Schematic::parse(input);
         let part_numbers_sum = schematic.sum_part_numbers();
         assert_eq!(part_numbers_sum, 4361);
@@ -142,7 +143,8 @@ mod tests {
 ..592.....
 ......755.
 ...$.*....
-.664.598..";
+.664.598..
+";
         let schematic = Schematic::parse(input);
         let gear_ratios_sum = schematic.sum_gear_ratios();
         assert_eq!(gear_ratios_sum, 467835);
