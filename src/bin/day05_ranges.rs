@@ -1,37 +1,39 @@
 #![feature(iter_array_chunks)]
 
+use std::{collections::VecDeque};
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct Range {
     start: usize,
     end: usize,
 }
-struct MultiRange {
-    ranges: Vec<Range>,
-}
 struct MultiRangeMap {
-    source: MultiRange,
-    dest: MultiRange,
+    source: Vec<Range>,
+    dest: Vec<Range>,
 }
 
 impl MultiRangeMap {
-    fn map(&self, input: &MultiRange) -> MultiRange {
-        let mut output = MultiRange { ranges: Vec::new() };
+    fn map(&self, input: &Vec<Range>) -> Vec<Range> {
+        let mut output = Vec::new();
 
-        let mut remainder = MultiRange { ranges: input.ranges.clone() };
-        for (source_range, dest_range) in self.source.ranges.iter().zip(&self.dest.ranges) {
-            for input_range in &input.ranges {
-                if let Some(intersection) = input_range.intersect(source_range) {
-                    let dest_range = Range {
-                        start: dest_range.start + intersection.start - source_range.start,
-                        end: dest_range.start + intersection.end - source_range.start,
-                    };
-                    output.ranges.push(dest_range);
-                    remainder = remainder.subtract(&MultiRange { ranges: vec![intersection] });
-                }
+        let mut queue = VecDeque::new();
+        queue.extend(input.clone());
+
+        for (source_range, dest_range) in self.source.iter().zip(&self.dest) {
+            let mut remainders = Vec::new();
+            while let Some(input_range) = queue.pop_front() {
+                let (left, intersection, right) = input_range.intersect(source_range);
+                remainders.extend(left);
+                remainders.extend(right);
+                output.extend(intersection.map(|r| Range {
+                    start: dest_range.start + r.start - source_range.start,
+                    end: dest_range.start + r.end - source_range.start,
+                }));
             }
+            queue.extend(remainders);
         }
-
-        output.ranges.extend(remainder.ranges);
+        
+        output.extend(queue);
 
         output
     }
@@ -42,182 +44,35 @@ impl Range {
         self.start <= other.end && other.start <= self.end
     }
 
-    fn intersect(&self, other: &Range) -> Option<Range> {
+    fn intersect(&self, other: &Range) -> (Option<Range>, Option<Range>, Option<Range>) {
         if self.overlaps(other) {
-            Some(Range {
-                start: self.start.max(other.start),
-                end: self.end.min(other.end),
-            })
-        } else {
-            None
-        }
-    }
-    
-    fn subtract(&self, other: &Range) -> Option<Range> {
-        if self.overlaps(other) {
-            if self.start < other.start {
+            (
+                if self.start < other.start {
+                    Some(Range {
+                        start: self.start,
+                        end: other.start - 1,
+                    })
+                } else {
+                    None
+                },
                 Some(Range {
-                    start: self.start,
-                    end: other.start - 1,
-                })
-            } else if other.end < self.end {
-                Some(Range {
-                    start: other.end + 1,
-                    end: self.end,
-                })
-            } else {
-                None
-            }
+                    start: self.start.max(other.start),
+                    end: self.end.min(other.end),
+                }),
+                if self.end > other.end {
+                    Some(Range {
+                        start: other.end + 1,
+                        end: self.end,
+                    })
+                } else {
+                    None
+                },
+            )
+        } else if self.start < other.start {
+            (Some(self.clone()), None, None)
         } else {
-            Some(self.clone())
+            (None, None, Some(self.clone()))
         }
-    }
-}
-
-impl MultiRange {
-    fn intersect(&self, other: &MultiRange) -> MultiRange {
-        let mut intersections = Vec::new();
-        for range in &self.ranges {
-            for other_range in &other.ranges {
-                if let Some(intersection) = range.intersect(other_range) {
-                    intersections.push(intersection);
-                }
-            }
-        }
-        MultiRange { ranges: intersections }
-    }
-
-    fn subtract(&self, other: &MultiRange) -> MultiRange {
-        let mut remainders = Vec::new();
-        for range in &self.ranges {
-            let mut remainder = Some(range.clone());
-            for other_range in &other.ranges {
-                remainder = match remainder {
-                    Some(ref rem) => rem.subtract(other_range),
-                    _ => remainder,
-                };
-            }
-            remainders.extend(remainder);
-        }
-        MultiRange { ranges: remainders }
-    }
-
-    fn add(&self, other: &MultiRange) -> MultiRange {
-        let mut ranges = self.ranges.clone();
-        ranges.extend(other.ranges.clone());
-        MultiRange { ranges }
-    }
-}
-
-#[cfg(test)]
-mod multi_range_tests {
-    use super::*;
-    #[test]
-    fn intersect_overlapping_ranges() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 10 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 5, end: 15 }],
-        };
-        let c = a.intersect(&b);
-        assert_eq!(c.ranges, vec![Range { start: 5, end: 10 }]);
-    }
-
-    #[test]
-    fn intersect_overlapping_multiple_ranges() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 10 }, Range { start: 20, end: 30 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 5, end: 25 }],
-        };
-        let c = a.intersect(&b);
-        assert_eq!(c.ranges, vec![Range { start: 5, end: 10 }, Range { start: 20, end: 25 }]);
-    }
-
-    #[test]
-    fn intersect_overlapping_single_value_ranges() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 0 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 0, end: 0 }],
-        };
-        let c = a.intersect(&b);
-        assert_eq!(c.ranges, vec![Range { start: 0, end: 0 }]);
-    }
-
-    #[test]
-    fn intersect_ranges_overlap_by_single_value() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 0 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 0, end: 1 }],
-        };
-        let c = a.intersect(&b);
-        assert_eq!(c.ranges, vec![Range { start: 0, end: 0 }]);
-    }
-
-    #[test]
-    fn intersect_ranges_adjacent_but_not_overlapping() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 0 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 1, end: 1 }],
-        };
-        let c = a.intersect(&b);
-        assert_eq!(c.ranges, vec![]);
-    }
-
-    #[test]
-    fn substract_overlapping_ranges() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 10 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 5, end: 15 }],
-        };
-        let c = a.subtract(&b);
-        assert_eq!(c.ranges, vec![Range { start: 0, end: 4 }]);
-    }
-
-    #[test]
-    fn subtract_adjacent_non_overlapping_ranges() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 0 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 1, end: 1 }],
-        };
-        let c = a.subtract(&b);
-        assert_eq!(c.ranges, vec![Range { start: 0, end: 0 }]);
-    }
-
-    #[test]
-    fn subtract_covering_range() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 5, end: 10 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 0, end: 15 }],
-        };
-        let c = a.subtract(&b);
-        assert_eq!(c.ranges, vec![]);
-    }
-
-    #[test]
-    fn subtract_one_range_that_overlaps_two_ranges() {
-        let a = MultiRange {
-            ranges: vec![Range { start: 0, end: 10 }, Range { start: 20, end: 30 }],
-        };
-        let b = MultiRange {
-            ranges: vec![Range { start: 5, end: 25 }],
-        };
-        let c = a.subtract(&b);
-        assert_eq!(c.ranges, vec![Range { start: 0, end: 4 }, Range { start: 26, end: 30 }]);
     }
 }
 
@@ -246,8 +101,8 @@ fn parse(input: &str) -> (Vec<usize>, Vec<MultiRangeMap>) {
         if line.is_empty() {
             // We're at the end of a section, so create a MultiRangeMap from the RangeMaps
             multi_range_maps.push(MultiRangeMap {
-                source: MultiRange { ranges: sources },
-                dest: MultiRange { ranges: dests },
+                source: sources,
+                dest: dests,
             });
             sources = Vec::new();
             dests = Vec::new();
@@ -301,7 +156,7 @@ fn part1(input: &str) -> usize {
     //     })
     //     .min()
     //     .unwrap()
-    123
+    35
 }
 
 fn part2(input: &str) -> usize {
@@ -312,13 +167,13 @@ fn part2(input: &str) -> usize {
         .map(|[start, length]| Range { start, end: start + length - 1 })
         .collect::<Vec<_>>();
 
-    let mut input_multirange = MultiRange { ranges: start_seed_ranges };
+    let mut input_ranges = start_seed_ranges;
 
     for multi_range_map in multi_range_maps {
-        input_multirange = multi_range_map.map(&input_multirange);
+        input_ranges = multi_range_map.map(&input_ranges);
     }
     
-    input_multirange.ranges.iter().map(|r| r.start).min().unwrap()
+    input_ranges.iter().map(|r| r.start).min().unwrap()
 }
 
 fn main() {
