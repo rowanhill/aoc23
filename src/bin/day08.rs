@@ -81,6 +81,74 @@ fn gcd(a: usize, b: usize) -> usize {
     }
 }
 
+// Given a starting point, find how long it takes until the sequence loops back to the same place, and
+// at which points it passes through a node ending in Z.
+fn find_loop(turns: &[u8], map: &HashMap<String, [String; 2]>, start: &String) -> (usize, Vec<usize>) {
+    let mut history = HashMap::new();
+    let mut z_node_counts = Vec::new();
+    let mut current = start;
+    let mut count = 0;
+
+    while !history.contains_key(&(count % turns.len(), current)) {
+        // Record that we've been here
+        history.insert((count % turns.len(), current), count);
+
+        // Record if this is a possible end node
+        if current.ends_with('Z') {
+            z_node_counts.push(count);
+        }
+
+        // Advance to the next location
+        let turn = turns[count % turns.len()];
+        let next = &map[current][turn as usize];
+        current = next;
+        count += 1;
+    }
+    let start_of_loop = history[&(count % turns.len(), current)];
+
+    let loop_length = count - start_of_loop;
+    
+    (loop_length, z_node_counts)
+}
+
+// Check whether a given step would place a given loop on a Z node
+fn is_z_node((loop_length, z_node_counts): &(usize, Vec<usize>), step: usize) -> bool {
+    z_node_counts.iter().any(|z| (step - z) % loop_length == 0)
+}
+
+fn find_simultaneous_z_node_count(turns: &[u8], map: &HashMap<String, [String; 2]>, starts: &[&String]) -> usize {
+    // Find the loop length and z node counts for each starting point
+    let mut loop_lengths_and_z_node_counts = starts.iter()
+        .map(|start| find_loop(turns, map, start))
+        .collect::<Vec<_>>();
+    loop_lengths_and_z_node_counts.sort_unstable_by_key(|(_, z_node_counts)| z_node_counts.len());
+    loop_lengths_and_z_node_counts.reverse();
+    
+    let (loop_length, z_node_counts) = loop_lengths_and_z_node_counts.pop().unwrap();
+
+    let mut iteration = 1;
+    loop {
+        for z in &z_node_counts {
+            let step = iteration * loop_length + z;
+            if loop_lengths_and_z_node_counts.iter().all(|loop_info| is_z_node(loop_info, step)) {
+                return step;
+            }
+        }
+
+        iteration += 1;
+    }
+}
+
+fn part2_general(input: &str) -> usize{
+    let (turns, map) = parse(input);
+
+    let start_locations = map.keys()
+        .filter(|k| k.ends_with('A'))
+        .collect::<Vec<_>>();
+
+    find_simultaneous_z_node_count(&turns, &map, &start_locations)
+}
+
 fn main() {
     let input = include_str!("../../input/day08");
     let num_turns_p1 = part1(input);
@@ -88,6 +156,10 @@ fn main() {
 
     let num_turns_p2 = part2(input);
     println!("Part 2: {}", num_turns_p2);
+
+    // Alternative, more general solution
+    let num_turns_p2_general = part2_general(input);
+    println!("Part 2: {}", num_turns_p2_general);
 }
 
 #[cfg(test)]
