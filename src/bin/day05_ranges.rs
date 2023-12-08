@@ -1,6 +1,6 @@
 #![feature(iter_array_chunks)]
 
-use std::{collections::VecDeque};
+use std::collections::VecDeque;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct Range {
@@ -11,13 +11,16 @@ struct MultiRangeMap {
     source: Vec<Range>,
     dest: Vec<Range>,
 }
+struct MultiRange {
+    ranges: Vec<Range>,
+}
 
 impl MultiRangeMap {
-    fn map(&self, input: &Vec<Range>) -> Vec<Range> {
-        let mut output = Vec::new();
+    fn map(&self, input: &MultiRange) -> MultiRange {
+        let mut output = MultiRange { ranges: Vec::new() };
 
         let mut queue = VecDeque::new();
-        queue.extend(input.clone());
+        queue.extend(input.ranges.clone());
 
         for (source_range, dest_range) in self.source.iter().zip(&self.dest) {
             let mut remainders = Vec::new();
@@ -25,23 +28,52 @@ impl MultiRangeMap {
                 let (left, intersection, right) = input_range.intersect(source_range);
                 remainders.extend(left);
                 remainders.extend(right);
-                output.extend(intersection.map(|r| Range {
+                let mapped_intersection = intersection.map(|r| Range {
                     start: dest_range.start + r.start - source_range.start,
                     end: dest_range.start + r.end - source_range.start,
-                }));
+                });
+                if let Some(mapped) = mapped_intersection {
+                    output.merge_range(&mapped);
+                }
             }
             queue.extend(remainders);
         }
         
-        output.extend(queue);
+        for range in queue {
+            output.merge_range(&range);
+        }
 
         output
+    }
+}
+
+impl MultiRange {
+    fn merge_range(&mut self, range: &Range) {
+        let mut range = range.clone();
+        let mut new_ranges = Vec::new();
+        for r in &self.ranges {
+            if r.overlaps_or_abuts(&range) {
+                range = Range {
+                    start: range.start.min(r.start),
+                    end: range.end.max(r.end),
+                };
+            } else {
+                new_ranges.push(r.clone());
+            }
+        }
+        new_ranges.push(range);
+        new_ranges.sort_by_key(|r| r.start);
+        self.ranges = new_ranges;
     }
 }
 
 impl Range {
     fn overlaps(&self, other: &Range) -> bool {
         self.start <= other.end && other.start <= self.end
+    }
+
+    fn overlaps_or_abuts(&self, other: &Range) -> bool {
+        self.start <= other.end + 1 && other.start <= self.end + 1
     }
 
     fn intersect(&self, other: &Range) -> (Option<Range>, Option<Range>, Option<Range>) {
@@ -130,33 +162,29 @@ fn parse(input: &str) -> (Vec<usize>, Vec<MultiRangeMap>) {
             end: dest_start + length - 1,
         });
     }
+    // We're at the end of the file, so create a MultiRangeMap from the final RangeMaps
+    multi_range_maps.push(MultiRangeMap {
+        source: sources,
+        dest: dests,
+    });
 
     (start_seeds, multi_range_maps)
 }
 
 fn part1(input: &str) -> usize {
-    // let (start_seeds, mappings_by_category) = parse(input);
+    let (start_seeds, multi_range_maps) = parse(input);
 
-    // start_seeds
-    //     .iter()
-    //     .map(|seed| {
-    //         let mut source_id = *seed;
-    //         for (source, _dest) in &CATEGORY_PAIRS {
-    //             let map_ranges = mappings_by_category.get(source).unwrap();
-    //             let dest_id = map_ranges
-    //                 .iter()
-    //                 .find(|mr| {
-    //                     mr.source_start <= source_id && source_id < mr.source_start + mr.length
-    //                 })
-    //                 .map(|mr| mr.dest_start + source_id - mr.source_start)
-    //                 .unwrap_or(source_id);
-    //             source_id = dest_id;
-    //         }
-    //         source_id
-    //     })
-    //     .min()
-    //     .unwrap()
-    35
+    let start_seed_ranges = start_seeds.into_iter()
+        .map(|start| Range { start, end: start + 1 })
+        .collect::<Vec<_>>();
+
+    let mut input_ranges = MultiRange { ranges: start_seed_ranges };
+
+    for multi_range_map in multi_range_maps {
+        input_ranges = multi_range_map.map(&input_ranges);
+    }
+    
+    input_ranges.ranges.iter().map(|r| r.start).min().unwrap()
 }
 
 fn part2(input: &str) -> usize {
@@ -167,13 +195,13 @@ fn part2(input: &str) -> usize {
         .map(|[start, length]| Range { start, end: start + length - 1 })
         .collect::<Vec<_>>();
 
-    let mut input_ranges = start_seed_ranges;
+    let mut input_ranges = MultiRange { ranges: start_seed_ranges };
 
     for multi_range_map in multi_range_maps {
         input_ranges = multi_range_map.map(&input_ranges);
     }
     
-    input_ranges.iter().map(|r| r.start).min().unwrap()
+    input_ranges.ranges.iter().map(|r| r.start).min().unwrap()
 }
 
 fn main() {
@@ -183,7 +211,7 @@ fn main() {
     println!("Part 1: {}", nearest_location);
 
     let nearest_location_2 = part2(input);
-    println!("Part 2: {}", nearest_location_2); // 46294175
+    println!("Part 2: {}", nearest_location_2);
 }
 
 #[cfg(test)]
