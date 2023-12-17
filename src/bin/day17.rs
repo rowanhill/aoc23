@@ -137,8 +137,14 @@ mod tests {
 4322674655533";
 
     #[test]
-    fn test_shortest_path() {
+    fn test_shortest_path_part_1() {
         let grid = parse(EXAMPLE);
         assert_eq!(shortest_path(&grid, 0, 3), 102);
+    }
+
+    #[test]
+    fn test_shortest_path_part_2() {
+        let grid = parse(EXAMPLE);
+        assert_eq!(shortest_path(&grid, 4, 10), 94);
     }
 }
