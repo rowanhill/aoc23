@@ -116,9 +116,11 @@ impl Circuit {
     }
 
     // Counts the numbers of (low, high) pulses sent
-    fn push_button(&mut self) -> (usize, usize) {
+    fn push_button(&mut self, low_target: &str) -> (usize, usize, bool) {
         let mut count_low = 0;
         let mut count_high = 0;
+        let mut target_received_low = false;
+
         let mut queue = VecDeque::new();
         queue.push_back(("button".to_string(), Pulse::Low, "broadcaster".to_string()));
 
@@ -133,20 +135,40 @@ impl Circuit {
                     .map(|(next, pulse)| (to.clone(), pulse, next));
                 queue.extend(next_pulses);
             }
+            if to == low_target && matches!(pulse, Pulse::Low) {
+                target_received_low = true;
+            }
         }
 
-        (count_low, count_high)
+        (count_low, count_high, target_received_low)
     }
 
     fn push_button_times(&mut self, n: usize) -> (usize, usize) {
         let mut count_low = 0;
         let mut count_high = 0;
         for _ in 0..n {
-            let (low, high) = self.push_button();
+            let (low, high, _) = self.push_button("rx");
             count_low += low;
             count_high += high;
         }
         (count_low, count_high)
+    }
+
+    fn num_presses_to_low_to_module(&mut self, module: &str) -> usize {
+        let mut count = 0;
+        
+        loop {
+            count += 1;
+            if count % 100_000 == 0 {
+                println!("{} presses", count);
+            }
+            let (_, _, terminate) = self.push_button(module);
+            if terminate {
+                break;
+            }
+        }
+
+        count
     }
 }
 
@@ -155,6 +177,24 @@ fn main() {
     let mut circuit = Circuit::parse(input);
     let (low, high) = circuit.push_button_times(1000);
     println!("Part 1: {}", low * high);
+
+    // By manual inspection, we can see that rx receives a low when all inputs to gf are high
+    // gf has four inputs, each of which is a & with a single input. & behaves as NAND, so with
+    // a single input it behaves as NOT. So, rx receives a low when all the inputs to the NOTs are
+    // low. The circuits upstream of these nots are all independent, joining only at the broadcaster
+    // module. So, we can find the number of presses required to sent a low to each NOT indepently:
+    let mut circuit = Circuit::parse(input);
+    let num_kr = circuit.num_presses_to_low_to_module("kr");
+    let mut circuit = Circuit::parse(input);
+    let num_qk = circuit.num_presses_to_low_to_module("qk");
+    let mut circuit = Circuit::parse(input);
+    let num_zs = circuit.num_presses_to_low_to_module("zs");
+    let mut circuit = Circuit::parse(input);
+    let num_kf = circuit.num_presses_to_low_to_module("kf");
+
+    // Now we know the number of presses required to send a low to each NOT, we can find the number
+    // of pressses required to send a low to rx: the least common multiple of the four numbers
+    println!("Part 2 is the lcm of: {}, {}, {}, {}", num_kr, num_qk, num_zs, num_kf);
 }
 
 #[cfg(test)]
@@ -170,7 +210,7 @@ mod tests {
     #[test]
     fn test_example1_low_high_counts() {
         let mut circuit = Circuit::parse(EXAMPLE_1);
-        let (low, high) = circuit.push_button();
+        let (low, high, _) = circuit.push_button("output");
         assert_eq!(low, 8);
         assert_eq!(high, 4);
     }
@@ -185,23 +225,23 @@ mod tests {
     fn test_example_2_low_high_counts() {
         let mut circuit = Circuit::parse(EXAMPLE_2);
 
-        let (low, high) = circuit.push_button();
+        let (low, high, _) = circuit.push_button("output");
         assert_eq!(low, 4);
         assert_eq!(high, 4);
 
-        let (low, high) = circuit.push_button();
+        let (low, high,_ ) = circuit.push_button("output");
         assert_eq!(low, 4);
         assert_eq!(high, 2);
 
-        let (low, high) = circuit.push_button();
+        let (low, high, _) = circuit.push_button("output");
         assert_eq!(low, 5);
         assert_eq!(high, 3);
 
-        let (low, high) = circuit.push_button();
+        let (low, high, _) = circuit.push_button("output");
         assert_eq!(low, 4);
         assert_eq!(high, 2);
 
-        let (low, high) = circuit.push_button();
+        let (low, high, _) = circuit.push_button("output");
         assert_eq!(low, 4);
         assert_eq!(high, 4);
     }
