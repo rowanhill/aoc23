@@ -150,22 +150,18 @@ fn flood_fill_and_count(start: &Coord, map: &Map, steps_allowed: usize) -> usize
     count
 }
 
-fn generate_initial_series(start: &Coord, map: &Map) -> Vec<usize> {
-    vec![
+fn generate_initial_series(start: &Coord, map: &Map) -> [usize; 3] {
+    [
         flood_fill_and_count(start, map, 65),
         flood_fill_and_count(start, map, 65 +     131),
         flood_fill_and_count(start, map, 65 + 2 * 131),
-        flood_fill_and_count(start, map, 65 + 3 * 131),
     ]
 }
 
-fn predict_next_in_series(series: &[usize]) -> usize {
-    let diffs = series.windows(2).map(|w| w[1] - w[0]).collect::<Vec<_>>();
-    if diffs.iter().all(|d| d == &0) {
-        series[series.len() - 1]
-    } else {
-        series[series.len() - 1] + predict_next_in_series(&diffs)
-    }
+fn find_second_difference(series: &[usize; 3]) -> usize {
+    let first_diff_a = series[1] - series[0];
+    let first_diff_b = series[2] - series[1];
+    first_diff_b - first_diff_a
 }
 
 // From manual inspection of the number of possible positions when we reach the edge of each new page,
@@ -173,13 +169,17 @@ fn predict_next_in_series(series: &[usize]) -> usize {
 // of the series
 fn part2(start: &Coord, map: &Map, num_steps: usize) -> usize {
     let mut series = generate_initial_series(start, map);
-    while series.len() < num_steps / 131 {
-        if series.len() % 500 == 0 {
-            println!("{} steps completed ({} %)", series.len(), series.len() * 100 / (num_steps / 131));
-        }
-        series.push(predict_next_in_series(&series));
+    let second_diff = find_second_difference(&series);
+
+    for _ in 3..=(num_steps / 131) {
+        let first_diff = series[1] - series[0] + second_diff;
+        let next = series[2] + first_diff + second_diff;
+        series[0] = series[1];
+        series[1] = series[2];
+        series[2] = next;
     }
-    predict_next_in_series(&series)
+    
+    series[2]
 }
 
 fn main() {
