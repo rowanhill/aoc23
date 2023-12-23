@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Coord { x: usize, y: usize }
@@ -33,18 +33,30 @@ impl Coord {
     }
 }
 
+#[derive(PartialEq, Eq)]
 enum Direction { North, East, South, West }
+impl Direction {
+    fn inverse(&self) -> Self {
+        match self {
+            Direction::North => Direction::South,
+            Direction::East => Direction::West,
+            Direction::South => Direction::North,
+            Direction::West => Direction::East,
+        }
+    }
+}
 
 struct Forest {
     bytes: &'static [u8],
     width: usize,
     height: usize,
+    ignore_slopes: bool,
 }
 impl Forest {
     fn new(bytes: &'static [u8]) -> Self {
         let width = bytes.iter().position(|&b| b == b'\n').unwrap();
         let height = (bytes.len() + 1) / (width + 1);
-        Self { bytes, width, height }
+        Self { bytes, width, height, ignore_slopes: false }
     }
 
     fn get(&self, coord: &Coord) -> Option<u8> {
@@ -55,17 +67,17 @@ impl Forest {
         }
     }
 
-    fn get_permitted_neighbours(&self, coord: &Coord) -> Vec<Coord> {
+    fn get_permitted_neighbours(&self, coord: &Coord) -> Vec<(Direction, Coord)> {
         use Direction::*;
         let mut neighbours = Vec::new();
         let cur_byte = self.get(coord).unwrap();
 
         for (dir, slope) in [(North, b'^'), (East, b'>'), (South, b'v'), (West, b'<')] {
-            if cur_byte == b'.' || cur_byte == slope {
+            if (self.ignore_slopes && cur_byte != b'#') || (!self.ignore_slopes && (cur_byte == b'.' || cur_byte == slope)) {
                 if let Some(next_coord) = coord.step(&dir) {
                     if let Some(next_byte) = self.get(&next_coord) {
                         if next_byte != b'#' {
-                            neighbours.push(next_coord);
+                            neighbours.push((dir, next_coord));
                         }
                     }
                 }
@@ -83,13 +95,18 @@ impl Forest {
         self.find_longest_path_len_dfs(&start, &target, &mut visited)
     }
 
-    fn find_longest_path_len_dfs(&self, start: &Coord, target: &Coord, visited: &mut HashSet<Coord>) -> Option<usize> {
+    fn find_longest_path_len_dfs(
+        &self,
+        start: &Coord,
+        target: &Coord,
+        visited: &mut HashSet<Coord>,
+    ) -> Option<usize> {
         if start == target {
             return Some(visited.len() - 1);
         }
 
         self.get_permitted_neighbours(start).into_iter()
-            .filter_map(|n| {
+            .filter_map(|(_, n)| {
                 if visited.insert(n) {
                     let l = self.find_longest_path_len_dfs(&n, target, visited);
                     visited.remove(&n);
@@ -100,12 +117,84 @@ impl Forest {
             })
             .max()
     }
+
+    fn simplify_graph(&self) -> HashMap<Coord, HashSet<(Coord, usize)>> {
+        use Direction::*;
+
+        let mut queue = Vec::new();
+        queue.push((Coord::new(1, 0), South));
+
+        let mut visited = HashSet::new();
+
+        let mut graph = HashMap::new();
+
+        while let Some((coord, dir)) = queue.pop() {
+            let mut cur_coord = coord.step(&dir).unwrap();
+            let mut steps = 1;
+            let mut neighbours = self.get_permitted_neighbours(&cur_coord).into_iter()
+                .filter(|(d, _)| *d != dir.inverse())
+                .collect::<Vec<_>>();
+            while neighbours.len() == 1 {
+                steps += 1;
+                let (next_dir, next_coord) = neighbours.pop().unwrap();
+                cur_coord = next_coord;
+                neighbours = self.get_permitted_neighbours(&cur_coord).into_iter()
+                    .filter(|(d, _)| *d != next_dir.inverse())
+                    .collect::<Vec<_>>();
+            }
+            graph.entry(coord).or_insert_with(HashSet::new).insert((cur_coord, steps));
+            graph.entry(cur_coord).or_insert_with(HashSet::new).insert((coord, steps));
+            if !visited.contains(&cur_coord) {
+                for (d, _) in neighbours {
+                    queue.push((cur_coord, d));
+                }
+                visited.insert(cur_coord);
+            }
+        }
+
+        graph
+    }
+
+    fn find_longest_path_len_simplified(&self) -> Option<usize> {
+        let graph = self.simplify_graph();
+        let start = Coord::new(1, 0);
+        let target = Coord::new(self.width - 2, self.height - 1);
+        let mut visited = HashSet::new();
+        visited.insert(start);
+        self.find_longest_path_len_dfs_simplified(&graph, &start, &target, &mut visited)
+    }
+
+    fn find_longest_path_len_dfs_simplified(
+        &self,
+        graph: &HashMap<Coord, HashSet<(Coord, usize)>>,
+        start: &Coord,
+        target: &Coord,
+        visited: &mut HashSet<Coord>,
+    ) -> Option<usize> {
+        if start == target {
+            return Some(0);
+        }
+
+        graph[start].iter()
+            .filter_map(|(n, steps)| {
+                if visited.insert(*n) {
+                    let l = self.find_longest_path_len_dfs_simplified(graph, n, target, visited);
+                    visited.remove(n);
+                    l.map(|l| l + steps)
+                } else {
+                    None
+                }
+            })
+            .max()
+    }
 }
 
 fn main() {
     let input = include_bytes!("../../input/day23");
-    let forest = Forest::new(input);
+    let mut forest = Forest::new(input);
     println!("Part 1: {:?}", forest.find_longest_path_len());
+    forest.ignore_slopes = true;
+    println!("Part 2: {:?}", forest.find_longest_path_len_simplified());
 }
 
 #[cfg(test)]
@@ -139,7 +228,7 @@ mod tests {
     #[test]
     fn test_part1() {
         let forest = Forest::new(EXAMPLE);
-        assert_eq!(forest.find_longest_path_len().unwrap(), 94);
+        assert_eq!(forest.find_longest_path_len(), Some(94));
     }
 
     #[test]
@@ -148,11 +237,13 @@ mod tests {
 #..#
 ##.#";
         let forest = Forest::new(input);
-        assert_eq!(forest.find_longest_path_len().unwrap(), 3);
+        assert_eq!(forest.find_longest_path_len(), Some(3));
     }
 
-    // #[test]
-    // fn test_part2() {
-    //     assert_eq!(part2(""), 0);
-    // }
+    #[test]
+    fn test_part2() {
+        let mut forest = Forest::new(EXAMPLE);
+        forest.ignore_slopes = true;
+        assert_eq!(forest.find_longest_path_len_simplified(), Some(154));
+    }
 }
