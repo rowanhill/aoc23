@@ -1,139 +1,158 @@
-#![feature(extract_if)]
 use std::{collections::{HashMap, BinaryHeap, HashSet}, cmp::Reverse};
 
-fn parse(input: &str) -> HashMap<String, Vec<String>> {
-    let mut map = HashMap::new();
-    for line in input.lines() {
-        let (from, tos) = line.split_once(": ").unwrap();
-        for to in tos.split(' ') {
-            map.entry(to.to_string()).or_insert_with(Vec::new).push(from.to_string());
-            map.entry(from.to_string()).or_insert_with(Vec::new).push(to.to_string());
-        }
-    }
-    map
+struct Graph{
+    neighbours: HashMap<usize, Vec<usize>>,
+    excluded_edges: HashSet<(usize, usize)>,
 }
 
-fn neighbours_excluding_edges(map: &HashMap<String, Vec<String>>, node: &String, exclusions: &HashSet<(String, String)>) -> Vec<String> {
-    map[node].iter()
-        .filter(|n|
-            !exclusions.contains(&(n.to_string(), node.to_string())) &&
-            !exclusions.contains(&(node.to_string(), n.to_string()))
-        )
-        .map(|n| n.to_string())
-        .collect()
-}
-
-fn shortest_path(map: &HashMap<String, Vec<String>>, from: &String, to: &String, exclusions: &HashSet<(String, String)>) -> Option<Vec<String>> {
-    let mut visited = vec![from.to_string()];
-    let mut queue = BinaryHeap::new();
-    queue.push((Reverse(0), vec![from.to_string()]));
-    while let Some((Reverse(len), path)) = queue.pop() {
-        let node = path.last().unwrap();
-        if node == to {
-            return Some(path);
-        }
-        for next in &neighbours_excluding_edges(map, node, exclusions) {
-            if !visited.contains(next) {
-                visited.push(next.to_string());
-                let mut new_path = path.clone();
-                new_path.push(next.to_string());
-                queue.push((Reverse(len + 1), new_path));
+impl Graph {
+    fn parse(input: &str) -> Self {
+        let mut nodes = HashMap::new();
+        let mut neighbours = HashMap::new();
+        for line in input.lines() {
+            let (from, tos) = line.split_once(": ").unwrap();
+            let len = nodes.len();
+            let from_index = *nodes.entry(from).or_insert(len);
+            for to in tos.split(' ') {
+                let len = nodes.len();
+                let to_index = *nodes.entry(to).or_insert(len);
+                neighbours.entry(to_index).or_insert_with(Vec::new).push(from_index);
+                neighbours.entry(from_index).or_insert_with(Vec::new).push(to_index);
             }
         }
-    }
-    None
-}
-
-fn find_wires_to_cut(
-    map: &HashMap<String, Vec<String>>,
-    exclusions: &HashSet<(String, String)>,
-    start: &String,
-    end: &String,
-    previously_seen: &HashSet<(String, String)>,
-) -> Option<HashSet<(String, String)>> {
-    let path = shortest_path(map, start, end, exclusions);
-
-    if path.is_none() {
-        // We've split the graph in two. If we did so with 3 exclusions, we've found the right ones.
-        // Otherwise, we've not found a solution
-        if exclusions.len() == 3 {
-            return Some(exclusions.clone());
-        } else {
-            return None;
-        }
+        Graph { neighbours, excluded_edges: HashSet::new() }
     }
 
-    if exclusions.len() == 3 {
-        // We've removed three edges, but the graph is still connected. This is not the right solution.
-        return None;
+    fn add_excluded_edge(&mut self, a: usize, b: usize) {
+        let low = a.min(b);
+        let high = a.max(b);
+        self.excluded_edges.insert((low, high));
     }
 
-    // Create all the edges traversed in the path
-    let path = path.unwrap();
-    let edges = path.iter().zip(path.iter().skip(1)).map(|(a, b)| (a.to_string(), b.to_string())).collect::<HashSet<_>>();
-
-    // For each of the edges, see if removing it will split the graph in two
-    for edge in &edges {
-        if previously_seen.contains(edge) {
-            // If we saw this edge in a previous iteration's path, it can't be part of the solution
-            // (because that would mean the previous path contained multiple edges traversing the two subgraphs
-            // and we've assumed that the path moves between the two subgraphs)
-            continue;
-        }
-
-        // Pick this edge to remove and recurse
-        let mut new_exclusions = exclusions.clone();
-        new_exclusions.insert(edge.clone());
-        let mut new_previously_seen = previously_seen.clone();
-        new_previously_seen.extend(edges.clone());
-        let found = find_wires_to_cut(map, &new_exclusions, start, end, previously_seen);
-        if found.is_some() {
-            return found;
-        }
+    fn is_edge_excluded(&self, a: usize, b: usize) -> bool {
+        let low = a.min(b);
+        let high = a.max(b);
+        self.excluded_edges.contains(&(low, high))
     }
 
-    // If we didn't find a solution, there isn't one
-    None
-}
+    fn remove_excluded_edge(&mut self, a: usize, b: usize) {
+        let low = a.min(b);
+        let high = a.max(b);
+        self.excluded_edges.remove(&(low, high));
+    }
 
-fn graph_len_excluding_edges(map: &HashMap<String, Vec<String>>, exclusions: &HashSet<(String, String)>) -> usize {
-    let start = map.keys().next().unwrap();
+    fn get_neighbours<'a>(&'a self, node: &'a usize) -> impl Iterator<Item=&usize> + 'a {
+        self.neighbours[node].iter()
+            .filter(|&&n| !self.is_edge_excluded(n, *node))
+    }
 
-    let mut visited = HashSet::new();
-    let mut queue = vec![start.to_string()];
-    while let Some(node) = queue.pop() {
-        if visited.contains(&node) {
-            continue;
+    fn shortest_path(&self, from: usize, to: usize) -> Option<Vec<usize>> {
+        let mut visited = vec![from];
+        let mut queue = BinaryHeap::new();
+        queue.push((Reverse(0), vec![from]));
+        while let Some((Reverse(len), path)) = queue.pop() {
+            let node = path.last().unwrap();
+            if node == &to {
+                return Some(path);
+            }
+            for next in self.get_neighbours(node) {
+                if !visited.contains(next) {
+                    visited.push(*next);
+                    let mut new_path = path.clone();
+                    new_path.push(*next);
+                    queue.push((Reverse(len + 1), new_path));
+                }
+            }
         }
-        visited.insert(node.to_string());
-        for next in &neighbours_excluding_edges(map, &node, exclusions) {
-            if visited.contains(next) {
+        None
+    }
+
+    fn three_exclusions_can_bisect(
+        &mut self,
+        start: usize,
+        end: usize,
+        previously_seen_edges: &HashSet<(usize, usize)>,
+    ) -> bool {
+        let path = self.shortest_path(start, end);
+
+        if path.is_none() {
+            // We've split the graph in two. If we did so with 3 exclusions, we've found the right ones.
+            // Otherwise, we've not found a solution
+            return self.excluded_edges.len() == 3
+        }
+
+        if self.excluded_edges.len() == 3 {
+            // We've removed three edges, but the graph is still connected. This is not the right solution.
+            return false;
+        }
+
+        // Create all the edges traversed in the path
+        let path = path.unwrap();
+        let edges = path.iter().zip(path.iter().skip(1)).map(|(a, b)| (*a, *b)).collect::<HashSet<_>>();
+
+        let mut new_previously_seen_edges = previously_seen_edges.clone();
+        new_previously_seen_edges.extend(edges.clone());
+
+        // For each of the edges, see if removing it will split the graph in two
+        for edge in &edges {
+            if previously_seen_edges.contains(edge) {
+                // If we saw this edge in a previous iteration's path, it can't be part of the solution
+                // (because that would mean the previous path contained multiple edges traversing the two subgraphs
+                // and we've assumed that the path moves between the two subgraphs)
                 continue;
             }
-            queue.push(next.to_string());
-        }
-    }
-    visited.len()
-}
 
-fn part1(map: &HashMap<String, Vec<String>>) -> usize {
-    let mut nodes = map.keys();
-    let start = nodes.next().unwrap();
-    for end in nodes {
-        let exclusions = find_wires_to_cut(map, &HashSet::new(), start, end, &HashSet::new());
-        if let Some(exclusions) = exclusions {
-            let subgraph_a_size = graph_len_excluding_edges(map, &exclusions);
-            let subgraph_b_size = map.len() - subgraph_a_size;
-            return subgraph_a_size * subgraph_b_size;
+            // Pick this edge to remove and recurse
+            self.add_excluded_edge(edge.0, edge.1);
+            if self.three_exclusions_can_bisect(start, end, previously_seen_edges) {
+                return true;
+            }
+            self.remove_excluded_edge(edge.0, edge.1);
         }
+
+        // If we didn't find a solution, there isn't one
+        false
     }
-    panic!("No solution found");
+
+    fn sizes_of_bisected_subgraphs(&mut self) -> (usize, usize) {
+        let mut nodes = self.neighbours.keys().copied().collect::<Vec<_>>();
+        let start = nodes.pop().unwrap();
+        for end in nodes {
+            if self.three_exclusions_can_bisect(start, end, &HashSet::new()) {
+                let subgraph_a_size = self.graph_len_excluding_edges();
+                let subgraph_b_size = self.neighbours.len() - subgraph_a_size;
+                return (subgraph_a_size, subgraph_b_size);
+            }
+        }
+        panic!("No solution found");
+    }
+
+    fn graph_len_excluding_edges(&self) -> usize {
+        let start = *self.neighbours.keys().next().unwrap();
+
+        let mut visited = HashSet::new();
+        let mut queue = vec![start];
+        while let Some(node) = queue.pop() {
+            if visited.contains(&node) {
+                continue;
+            }
+            visited.insert(node);
+            for next in self.get_neighbours(&node) {
+                if visited.contains(next) {
+                    continue;
+                }
+                queue.push(*next);
+            }
+        }
+        visited.len()
+    }
 }
 
 fn main() {
     let input = include_str!("../../input/day25");
-    let map = parse(input);
-    println!("Part 1: {}", part1(&map));
+    let mut graph = Graph::parse(input);
+    let (a, b) = graph.sizes_of_bisected_subgraphs();
+    println!("Part 1: {}", a * b);
 }
 
 #[cfg(test)]
@@ -155,7 +174,8 @@ nvd: lhk
 lsr: lhk
 rzs: qnr cmg lsr rsh
 frs: qnr lhk lsr";
-        let map = parse(input);
-        assert_eq!(part1(&map), 54);
+        let mut graph = Graph::parse(input);
+        let (a, b) = graph.sizes_of_bisected_subgraphs();
+        assert_eq!(a * b, 54);
     }
 }
