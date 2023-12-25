@@ -4,7 +4,17 @@ impl Coord {
         self.x >= min_xy && self.x <= max_xy &&
         self.y >= min_xy && self.y <= max_xy
     }
+
+    fn get(&self, dim: &Dimension) -> f64 {
+        match dim {
+            Dimension::X => self.x,
+            Dimension::Y => self.y,
+            Dimension::Z => self.z,
+        }
+    }
 }
+
+enum Dimension { X, Y, Z }
 
 struct Hailstone {
     pos: Coord,
@@ -50,33 +60,6 @@ fn num_collisions_xy(hailstones: &[Hailstone], min_xy: f64, max_xy: f64) -> usiz
 
 // Determine whether the paths of the two hailstones (ignoring z) intersect.
 fn collision_xy(h1: &Hailstone, h2: &Hailstone) -> Option<Coord> {
-    // A path is described by y = mx + c
-    // For a hailstone, what is dt, the time delta between the current position and when x = 0?
-    // dt = px / dx
-    // What is the y position at that time?
-    // y0 = py - dt * dy
-    // This is equivalent to c
-    // c = y0
-    // c = py - (px / dx) * dy
-    // What is the slope of the path?
-    // py = m*px + c
-    // py = m*px + py - (px / dx) * dy
-    // py = m*px + py - px*dy / dx
-    // 0 = m*px - px*dy / dx
-    // m*px = px*dy / dx
-    // m = dy / dx
-    // y = (dy / dx) * x + (py - (px / dx) * dy)
-    // y = (dy / dx)*x + py - px*(dy / dx)
-    // y = m*x + py - px*m
-    // y = m(x - px) + py
-    //
-    // H1: y = m1*x + py1 - px1*m1
-    // H2: y = m2*x + py2 - px2*m2
-    // m1*x + py1 - px1*m1 = m2*x + py2 - px2*m2
-    // m1*x - m2*x = py2 - py1 + px1*m1 - px2*m2
-    // x * (m1 - m2) = py2 - py1 + px1*m1 - px2*m2
-    // x = (py2 - py1 + px1*m1 - px2*m2) / (m1 - m2)
-
     let m1 = h1.vel.y / h1.vel.x;
     let m2 = h2.vel.y / h2.vel.x;
 
@@ -90,11 +73,54 @@ fn collision_xy(h1: &Hailstone, h2: &Hailstone) -> Option<Coord> {
     Some(Coord { x, y, z: 0.0 })
 }
 
+fn solve_for(hailstones: &[Hailstone], dim_a: &Dimension, dim_b: &Dimension) -> Vec<Vec<f64>> {
+    let mut equations = hailstones.iter().map(|hailstone| {
+        vec![
+            1.0,
+            -1.0 * hailstone.pos.get(dim_a),
+            hailstone.vel.get(dim_a),
+            hailstone.pos.get(dim_b),
+            -1.0 * hailstone.vel.get(dim_b),
+            hailstone.pos.get(dim_b) * hailstone.vel.get(dim_a) - hailstone.pos.get(dim_a) * hailstone.vel.get(dim_b)
+        ]
+    }).collect::<Vec<_>>();
+
+    for i in 0..(equations.len().min(equations[0].len() - 1)) {
+        let to_unit = equations[i][i];
+        for j in 0..equations[i].len() {
+            equations[i][j] /= to_unit;
+        }
+
+        for j in (i+1)..equations.len() {
+            let b = &equations[j];
+            let factor = b[i] / equations[i][i];
+            for k in 0..b.len() {
+                equations[j][k] -= equations[i][k] * factor;
+            }
+        }
+    }
+
+    equations
+}
+
+fn part2(hailstones: &[Hailstone]) -> f64 {
+    let equations_xy = solve_for(hailstones, &Dimension::Y, &Dimension::X);
+    let rock_y = equations_xy[4].iter().last().unwrap().round();
+
+    let equations_yx = solve_for(hailstones, &Dimension::X, &Dimension::Y);
+    let rock_x = equations_yx[4].iter().last().unwrap().round();
+
+    let equations_yz = solve_for(hailstones, &Dimension::Z, &Dimension::Y);
+    let rock_z = equations_yz[4].iter().last().unwrap().round();
+
+    rock_x + rock_y + rock_z
+}
+
 fn main() {
     let input = include_str!("../../input/day24");
     let hailstones = parse(input);
     println!("Part 1: {}", num_collisions_xy(&hailstones, 200000000000000_f64, 400000000000000_f64));
-    // 3634 too low
+    println!("Part 2: {}", part2(&hailstones));
 }
 
 #[cfg(test)]
