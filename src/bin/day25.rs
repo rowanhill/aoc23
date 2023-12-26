@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, BinaryHeap, HashSet}, cmp::Reverse};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 struct Graph{
     neighbours: HashMap<usize, Vec<usize>>,
@@ -46,25 +46,39 @@ impl Graph {
             .filter(|&&n| !self.is_edge_excluded(n, *node))
     }
 
-    fn shortest_path(&self, from: usize, to: usize) -> Option<Vec<usize>> {
-        let mut visited = vec![from];
-        let mut queue = BinaryHeap::new();
-        queue.push((Reverse(0), vec![from]));
-        while let Some((Reverse(len), path)) = queue.pop() {
-            let node = path.last().unwrap();
-            if node == &to {
-                return Some(path);
+    fn path(&self, from: usize, to: usize) -> Option<Vec<usize>> {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut predecessors = HashMap::new();
+        
+        queue.push_back(from);
+        while let Some(node) = queue.pop_front() {
+            if !visited.insert(node) {
+                continue;
             }
-            for next in self.get_neighbours(node) {
+            if node == to {
+                break;
+            }
+            for next in self.get_neighbours(&node) {
                 if !visited.contains(next) {
-                    visited.push(*next);
-                    let mut new_path = path.clone();
-                    new_path.push(*next);
-                    queue.push((Reverse(len + 1), new_path));
+                    queue.push_back(*next);
+                    predecessors.insert(*next, node);
                 }
             }
         }
-        None
+
+        let mut node = to;
+        let mut path = Vec::new();
+        while node != from {
+            if !predecessors.contains_key(&node) {
+                return None;
+            }
+            path.push(node);
+            node = predecessors[&node];
+        }
+        path.push(from);
+        path.reverse();
+        Some(path)
     }
 
     fn three_exclusions_can_bisect(
@@ -73,12 +87,12 @@ impl Graph {
         end: usize,
         previously_seen_edges: &HashSet<(usize, usize)>,
     ) -> bool {
-        let path = self.shortest_path(start, end);
+        let path = self.path(start, end);
 
         if path.is_none() {
             // We've split the graph in two. If we did so with 3 exclusions, we've found the right ones.
             // Otherwise, we've not found a solution
-            return self.excluded_edges.len() == 3
+            return self.excluded_edges.len() == 3;
         }
 
         if self.excluded_edges.len() == 3 {
@@ -88,14 +102,14 @@ impl Graph {
 
         // Create all the edges traversed in the path
         let path = path.unwrap();
-        let edges = path.iter().zip(path.iter().skip(1)).map(|(a, b)| (*a, *b)).collect::<HashSet<_>>();
+        let edges = path.windows(2);
 
         let mut new_previously_seen_edges = previously_seen_edges.clone();
-        new_previously_seen_edges.extend(edges.clone());
+        new_previously_seen_edges.extend(edges.clone().map(|e| (e[0], e[1])));
 
         // For each of the edges, see if removing it will split the graph in two
-        for edge in &edges {
-            if previously_seen_edges.contains(edge) {
+        for edge in edges {
+            if previously_seen_edges.contains(&(edge[0], edge[1])) {
                 // If we saw this edge in a previous iteration's path, it can't be part of the solution
                 // (because that would mean the previous path contained multiple edges traversing the two subgraphs
                 // and we've assumed that the path moves between the two subgraphs)
@@ -103,11 +117,11 @@ impl Graph {
             }
 
             // Pick this edge to remove and recurse
-            self.add_excluded_edge(edge.0, edge.1);
-            if self.three_exclusions_can_bisect(start, end, previously_seen_edges) {
+            self.add_excluded_edge(edge[0], edge[1]);
+            if self.three_exclusions_can_bisect(start, end, &new_previously_seen_edges) {
                 return true;
             }
-            self.remove_excluded_edge(edge.0, edge.1);
+            self.remove_excluded_edge(edge[0], edge[1]);
         }
 
         // If we didn't find a solution, there isn't one
@@ -115,10 +129,8 @@ impl Graph {
     }
 
     fn sizes_of_bisected_subgraphs(&mut self) -> (usize, usize) {
-        let mut nodes = self.neighbours.keys().copied().collect::<Vec<_>>();
-        let start = nodes.pop().unwrap();
-        for end in nodes {
-            if self.three_exclusions_can_bisect(start, end, &HashSet::new()) {
+        for i in 1..self.neighbours.len() {
+            if self.three_exclusions_can_bisect(0, i, &HashSet::new()) {
                 let subgraph_a_size = self.graph_len_excluding_edges();
                 let subgraph_b_size = self.neighbours.len() - subgraph_a_size;
                 return (subgraph_a_size, subgraph_b_size);
